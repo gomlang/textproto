@@ -30,4 +30,4 @@ high bytes; consumers must choose a character policy explicitly. The package
 does not parse SMTP status codes, MIME encoded words, HTTP start lines or
 multipart bodies.
 
-Run `just ecosystem-test textproto` from the repository root.
+Run `(cd ../verification && just ecosystem-test textproto)` from this library repository.
