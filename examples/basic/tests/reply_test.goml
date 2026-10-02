@@ -1,0 +1,20 @@
+package tests;
+
+use ecosystem::textproto;
+use std::bytes;
+use std::io;
+use std::testing;
+
+#[test]
+fn downstream_reads_bounded_smtp_capabilities() -> () {
+    let reader = testing::expect_ok(
+        textproto::Reader::new(
+            io::Cursor::new(bytes::Bytes::from_string("250-example.test\r\n250 SIZE 1000\r\n")),
+            textproto::Limits::standard(),
+        ),
+        "reader",
+    );
+    let reply = testing::expect_ok(reader.read_response(8, 1024), "EHLO reply");
+    testing::assert_eq(reply.code, 250);
+    testing::assert(reply.lines[1].to_vec() == b"SIZE 1000");
+}

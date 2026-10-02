@@ -1,0 +1,103 @@
+package tests;
+
+use ecosystem::textproto::{Reader, Limits, ErrorKind};
+use std::bytes;
+use std::io;
+use std::testing;
+
+#[test]
+fn numeric_replies_preserve_lines_octets_and_following_input() -> () {
+    let input = bytes::Bytes::from_vec(b"250-first\r\n250-\r\n250 \xff\r\n221\r\nNEXT\r\n");
+    let reader = testing::expect_ok(
+        Reader::new(io::Cursor::new(input), Limits::standard()),
+        "reader",
+    );
+    let reply = testing::expect_ok(reader.read_response(3, 29), "multiline");
+    testing::assert_eq(reply.code, 250);
+    testing::assert_eq(reply.lines.len(), 3);
+    testing::assert(reply.lines[0].to_vec() == b"first");
+    testing::assert(reply.lines[1].is_empty());
+    testing::assert(reply.lines[2].to_vec() == b"\xff");
+    let next = testing::expect_ok(reader.read_response(1, 5), "bare reply");
+    testing::assert_eq(next.code, 221);
+    testing::assert(next.lines[0].is_empty());
+    testing::assert(
+        testing::expect_some(testing::expect_ok(reader.read_line(), "remaining"), "line").to_vec()
+            == b"NEXT",
+    );
+}
+
+#[test]
+fn malformed_or_truncated_numeric_replies_are_terminal() -> () {
+    for input in[
+        "",
+        "25\r\n",
+        "099 bad\r\n",
+        "600 bad\r\n",
+        "2a0 bad\r\n",
+        "250\tbad\r\n",
+        "250-first\r\n251 last\r\n",
+        "250-first\r\n",
+        "250 bad\u0000text\r\n",
+    ] {
+        let reader = testing::expect_ok(
+            Reader::new(io::Cursor::new(bytes::Bytes::from_string(input)), Limits::standard()),
+            "reader",
+        );
+        testing::assert(reader.read_response(4, 100).is_err());
+        testing::assert_eq(
+            testing::expect_err(reader.read_line(), "terminal").kind,
+            ErrorKind::Closed,
+        );
+    }
+}
+
+#[test]
+fn reply_budgets_count_wire_bytes_and_lines() -> () {
+    for (lines, bytes) in[(1, 100), (2, 15)] {
+        let reader = testing::expect_ok(
+            Reader::new(
+                io::Cursor::new(bytes::Bytes::from_string("250-a\r\n250 ok\r\n")),
+                Limits::standard(),
+            ),
+            "reader",
+        );
+        testing::assert_eq(
+            testing::expect_err(reader.read_response(lines, bytes - 1), "reply limit").kind,
+            ErrorKind::Limit,
+        );
+    }
+    let reader = testing::expect_ok(
+        Reader::new(io::Cursor::new(bytes::Bytes::from_string("250 ok\r\n")), Limits::standard()),
+        "reader",
+    );
+    testing::assert_eq(
+        testing::expect_err(reader.read_response(0, 8), "invalid limit").kind,
+        ErrorKind::Limit,
+    );
+    testing::assert_eq(testing::expect_ok(reader.read_response(1, 8), "exact budget").code, 250);
+}
+
+#[test]
+fn reply_read_waits_for_active_dot_block_without_consuming_input() -> () {
+    let reader = testing::expect_ok(
+        Reader::new(
+            io::Cursor::new(bytes::Bytes::from_string("abc\r\n.\r\n250 ok\r\n")),
+            Limits::standard(),
+        ),
+        "reader",
+    );
+    let buffer = Vec::from_array([0]);
+    testing::assert_eq(
+        testing::expect_ok(reader.read_dot_chunk(buffer.as_mut_slice()), "dot prefix"),
+        1,
+    );
+    testing::assert_eq(
+        testing::expect_err(reader.read_response(1, 8), "active dot").kind,
+        ErrorKind::State,
+    );
+    testing::assert(
+        testing::expect_ok(reader.read_dot_bytes(), "dot remainder").to_vec() == b"bc\r\n",
+    );
+    testing::assert_eq(testing::expect_ok(reader.read_response(1, 8), "reply after dot").code, 250);
+}
