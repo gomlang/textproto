@@ -1,0 +1,96 @@
+package textproto;
+
+#[derive(Debug, PartialEq)]
+pub struct EnhancedStatus {
+    pub class: isize,
+    pub subject: isize,
+    pub detail: isize,
+}
+
+fn enhanced_component(value: string) -> Result[isize, Error] {
+    if value.byte_len() == 0 || value.byte_len() > 3
+        || value.byte_len() > 1 && value.byte_get(0) == b'0' {
+        return Result::Err(failure(ErrorKind::Invalid, 0, "invalid enhanced status component"))
+    }
+    let mut result = 0;
+    for byte in value.to_bytes() {
+        if byte < b'0' || byte > b'9' {
+            return Result::Err(failure(ErrorKind::Invalid, 0, "invalid enhanced status digit"))
+        }
+        result = result * 10 + (byte - b'0').to_isize();
+    }
+    Result::Ok(result)
+}
+
+impl EnhancedStatus {
+    pub fn parse(value: string) -> Result[EnhancedStatus, Error] {
+        if value.byte_len() > 9 {
+            return Result::Err(
+                failure(ErrorKind::Invalid, 0, "enhanced status exceeds syntax limit"),
+            )
+        }
+        let parts = value.split(".");
+        if parts.len() != 3 || (parts[0] != "2" && parts[0] != "4" && parts[0] != "5") {
+            return Result::Err(failure(ErrorKind::Invalid, 0, "invalid enhanced status class"))
+        }
+        Result::Ok(
+            EnhancedStatus {
+                class: enhanced_component(parts[0])?,
+                subject: enhanced_component(parts[1])?,
+                detail: enhanced_component(parts[2])?,
+            },
+        )
+    }
+}
+
+impl ToString for EnhancedStatus {
+    fn to_string(self: EnhancedStatus) -> string {
+        self.class.to_string() + "." + self.subject.to_string() + "." + self.detail.to_string()
+    }
+}
+
+impl Reply {
+    pub fn enhanced_status(self: Reply) -> Result[Option[EnhancedStatus], Error] {
+        let mut found: Option[EnhancedStatus] = Option::None;
+        let mut absent = false;
+        for line in self.lines {
+            if line.len() < 2 || line.get(0) < b'0' || line.get(0) > b'9' || line.get(1) != b'.' {
+                absent = true;
+                continue
+            }
+            let mut end = 0;
+            while end < line.len() && line.get(end) != b' ' && line.get(end) != b'\t' {
+                if end == 9 {
+                    return Result::Err(
+                        failure(ErrorKind::Invalid, 0, "enhanced status exceeds syntax limit"),
+                    )
+                }
+                end += 1;
+            }
+            let (valid, text) = string_from_utf8(line.slice(0, end).to_vec());
+            if !valid {
+                return Result::Err(failure(ErrorKind::Invalid, 0, "invalid enhanced status bytes"))
+            }
+            let status = EnhancedStatus::parse(text)?;
+            if status.class != self.code / 100 {
+                return Result::Err(
+                    failure(ErrorKind::Invalid, 0, "enhanced status class differs from reply"),
+                )
+            }
+            if let Some(previous) = found {
+                if previous != status {
+                    return Result::Err(
+                        failure(ErrorKind::Invalid, 0, "inconsistent enhanced statuses"),
+                    )
+                }
+            }
+            found = Option::Some(status);
+        }
+        if absent && found.is_some() {
+            return Result::Err(
+                failure(ErrorKind::Invalid, 0, "missing enhanced status on reply line"),
+            )
+        }
+        Result::Ok(found)
+    }
+}

@@ -32,8 +32,19 @@ Every continuation must repeat the code. The returned `Reply` keeps each text
 line as bytes, including empty lines and non-UTF-8 octets. It consumes exactly
 one reply; the next command or reply remains buffered. This supports
 [SMTP multiline replies](https://www.rfc-editor.org/rfc/rfc5321.html#section-4.2)
-without interpreting success, enhanced status codes or protocol-specific code
-ranges. It does not accept FTP's unprefixed intermediate lines.
+without interpreting success or protocol-specific code ranges. It does not accept FTP's unprefixed intermediate lines.
+
+`EnhancedStatus::parse` validates [RFC 3463](https://www.rfc-editor.org/rfc/rfc3463.html)
+mail status codes such as `5.1.1`: class 2/4/5, one to three decimal digits per
+subject/detail, and no leading zeroes. Unknown subject/detail numbers within
+those bounds are preserved for extension compatibility. The public fields are
+`class`, `subject`, and `detail`; `to_string()` gives the dotted representation.
+`Reply.enhanced_status()` optionally inspects the first token of each text line:
+all lines must omit it or carry the same code, whose class must match the numeric
+reply. A digit followed by a dot marks a candidate; malformed candidates fail.
+This follows [RFC 2034](https://www.rfc-editor.org/rfc/rfc2034.html)'s multiline
+consistency rule. Inspection does not mutate the reply/reader or interpret the
+human-readable remainder; callers decide whether to require enhanced codes.
 
 Reply budgets count all physical lines and wire bytes, including codes and CRLF,
 in addition to `max_line_bytes`. Malformed, truncated and over-budget replies
