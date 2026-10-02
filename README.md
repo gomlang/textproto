@@ -31,3 +31,15 @@ does not parse SMTP status codes, MIME encoded words, HTTP start lines or
 multipart bodies.
 
 Run `(cd ../verification && just ecosystem-test textproto)` from this library repository.
+
+## Development and examples
+
+Requires GoML 0.1.55 or newer. The `examples/basic/` example shares the root manifest and its dependencies. From the library root, run:
+
+```sh
+goml run --example basic
+goml test
+goml verify --timeout 300s
+```
+
+`goml test` builds the example and runs its tests. `goml verify` repeats the example checks as an independent module against an isolated registry snapshot. `(cd ../verification && just ecosystem-test textproto)` also retains the library-specific smoke and compatibility checks.

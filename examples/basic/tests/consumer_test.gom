@@ -1,6 +1,6 @@
 package tests;
 
-use consumer::textproto;
+use ecosystem::textproto::examples::basic as textproto;
 use std::testing;
 
 #[test]
