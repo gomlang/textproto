@@ -1,0 +1,71 @@
+package tests;
+
+use ecosystem::textproto::{EnhancedStatus, Reader, Limits};
+use std::bytes;
+use std::io;
+use std::testing;
+
+#[test]
+fn enhanced_codes_accept_extensions_and_reject_noncanonical_syntax() -> () {
+    for text in["2.0.0", "4.999.999", "5.1.1", "5.7.123"] {
+        testing::assert_eq(
+            testing::expect_ok(EnhancedStatus::parse(text), "code").to_string(),
+            text,
+        );
+    }
+    for text in[
+        "",
+        "1.0.0",
+        "3.0.0",
+        "9.0.0",
+        "5.01.1",
+        "5.1.00",
+        "5.1000.1",
+        "5..1",
+        "5.1",
+        "5.1.1.1",
+        "5.1.1 ",
+        " 5.1.1",
+        "5.a.1",
+        "5.-1.1",
+    ] {
+        testing::assert(EnhancedStatus::parse(text).is_err());
+    }
+}
+
+#[test]
+fn enhanced_reply_consistency_is_explicit_and_preserves_following_reply() -> () {
+    let reader = testing::expect_ok(
+        Reader::new(
+            io::Cursor::new(
+                bytes::Bytes::from_string("550-5.1.1 first\r\n550 5.1.1 second\r\n250 ok\r\n"),
+            ),
+            Limits::standard(),
+        ),
+        "reader",
+    );
+    let reply = testing::expect_ok(reader.read_response(3, 100), "reply");
+    testing::assert_eq(
+        testing::expect_some(testing::expect_ok(reply.enhanced_status(), "enhanced"), "present").to_string(),
+        "5.1.1",
+    );
+    testing::assert(
+        testing::expect_ok(
+            testing::expect_ok(reader.read_response(1, 100), "next reply").enhanced_status(),
+            "plain",
+        ).is_none(),
+    );
+    for wire in[
+        "550 4.1.1 mismatch\r\n",
+        "550-5.1.1 first\r\n550 5.2.1 second\r\n",
+        "550-plain\r\n550 5.1.1 second\r\n",
+        "550 5.01.1 malformed\r\n",
+    ] {
+        let reader = testing::expect_ok(
+            Reader::new(io::Cursor::new(bytes::Bytes::from_string(wire)), Limits::standard()),
+            "reader",
+        );
+        let reply = testing::expect_ok(reader.read_response(3, 100), "framing remains valid");
+        testing::assert(reply.enhanced_status().is_err());
+    }
+}

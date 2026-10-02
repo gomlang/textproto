@@ -1,0 +1,12 @@
+package tests;
+
+use ecosystem::textproto::{EnhancedStatus};
+use std::testing;
+
+#[test]
+fn downstream_classifies_enhanced_mail_status() -> () {
+    let status = testing::expect_ok(EnhancedStatus::parse("4.7.1"), "temporary failure");
+    testing::assert_eq(status.class, 4);
+    testing::assert_eq(status.subject, 7);
+    testing::assert_eq(status.detail, 1);
+}
