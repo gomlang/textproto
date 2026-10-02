@@ -199,3 +199,8 @@ pub fn parse_header_line(line: bytes::Bytes) -> Result[Field, Error] {
     validate_value(value)?;
     Result::Ok(Field { name, value })
 }
+
+pub struct Reply {
+    pub code: isize,
+    pub lines: Vec[bytes::Bytes],
+}

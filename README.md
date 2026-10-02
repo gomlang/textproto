@@ -26,9 +26,20 @@ field count, unfolded field value bytes and decoded dot-body bytes. Those limits
 are application policy, not SMTP's fixed transport line limit. Callers needing
 SMTP's 1000-octet line rule should set `max_line_bytes` accordingly. Header
 values reject control bytes other than horizontal tab but can contain arbitrary
-high bytes; consumers must choose a character policy explicitly. The package
-does not parse SMTP status codes, MIME encoded words, HTTP start lines or
-multipart bodies.
+high bytes; consumers must choose a character policy explicitly. `read_response(max_lines, max_bytes)` reads a numeric reply with a 100–599
+code. A hyphen continues a reply; a space or a bare three-digit code ends it.
+Every continuation must repeat the code. The returned `Reply` keeps each text
+line as bytes, including empty lines and non-UTF-8 octets. It consumes exactly
+one reply; the next command or reply remains buffered. This supports
+[SMTP multiline replies](https://www.rfc-editor.org/rfc/rfc5321.html#section-4.2)
+without interpreting success, enhanced status codes or protocol-specific code
+ranges. It does not accept FTP's unprefixed intermediate lines.
+
+Reply budgets count all physical lines and wire bytes, including codes and CRLF,
+in addition to `max_line_bytes`. Malformed, truncated and over-budget replies
+make the reader terminal. Invalid limit arguments and an active dot block fail
+without consuming input. The package does not parse MIME encoded words, HTTP
+start lines or multipart bodies.
 
 Run `(cd ../verification && just ecosystem-test textproto)` from this library repository.
 

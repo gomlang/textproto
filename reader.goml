@@ -246,6 +246,88 @@ impl[R: Read] Reader[R] {
         }
     }
 
+    fn response_inner(self: Reader[R], max_lines: isize, max_bytes: isize) -> Result[Reply, Error] {
+        let lines: Vec[bytes::Bytes] = Vec::new();
+        let mut total = 0;
+        let mut code = 0;
+        loop {
+            if lines.len() >= max_lines {
+                return Result::Err(
+                    failure(ErrorKind::Limit, self.offset.get(), "reply line count exceeds limit"),
+                )
+            }
+            let start = self.offset.get();
+            let line = self.line_inner()?.ok_or(
+                failure(ErrorKind::Truncated, start, "missing reply line"),
+            )?;
+            if line.len() + 2 > max_bytes - total {
+                return Result::Err(failure(ErrorKind::Limit, start, "reply exceeds byte limit"))
+            }
+            total += line.len() + 2;
+            if line.len() < 3 || line.get(0) < b'1' || line.get(0) > b'5' || line.get(1) < b'0'
+                || line.get(1) > b'9'
+                || line.get(2) < b'0'
+                || line.get(2) > b'9' {
+                return Result::Err(failure(ErrorKind::Invalid, start, "invalid numeric reply code"))
+            }
+            let current = (line.get(0) - b'0').to_isize() * 100
+                + (line.get(1) - b'0').to_isize() * 10
+                + (line.get(2) - b'0').to_isize();
+            if lines.is_empty() {
+                code = current;
+            } else if current != code {
+                return Result::Err(
+                    failure(ErrorKind::Invalid, start, "inconsistent multiline reply code"),
+                )
+            }
+            let continued = line.len() > 3 && line.get(3) == b'-';
+            if line.len() > 3 && !continued && line.get(3) != b' ' {
+                return Result::Err(
+                    failure(ErrorKind::Invalid, start + 3, "invalid numeric reply separator"),
+                )
+            }
+            let text = bytes::Bytes::from_slice_copy(
+                line.slice(
+                    if line.len() == 3 {
+                        3
+                    } else {
+                        4
+                    },
+                    line.len(),
+                ),
+            );
+            validate_value(text).map_err(|error| failure(error.kind, start, error.message))?;
+            lines.push(text);
+            if !continued {
+                return Result::Ok(Reply { code, lines })
+            }
+        }
+    }
+
+    pub fn read_response(self: Reader[R], max_lines: isize, max_bytes: isize) -> Result[
+        Reply,
+        Error,
+    ] {
+        if self.broken.get() {
+            return Result::Err(
+                failure(ErrorKind::Closed, self.offset.get(), "textproto reader failed"),
+            )
+        }
+        if self.dot_active.get() {
+            return Result::Err(failure(ErrorKind::State, self.offset.get(), "dot block is active"))
+        }
+        if max_lines < 1 || max_bytes < 0 {
+            return Result::Err(failure(ErrorKind::Limit, self.offset.get(), "invalid reply limits"))
+        }
+        match self.response_inner(max_lines, max_bytes) {
+            Ok(reply) => Result::Ok(reply),
+            Err(error) => {
+                self.broken.set(true);
+                Result::Err(error)
+            },
+        }
+    }
+
     pub fn reset_dot(self: Reader[R]) -> Result[(), Error] {
         if self.broken.get() || self.dot_active.get() || !self.dot_done.get() {
             return Result::Err(
