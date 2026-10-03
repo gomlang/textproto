@@ -128,6 +128,73 @@ impl[W: Write] Writer[W] {
         self.emit(encoded)
     }
 
+    pub fn write_response(self: Writer[W], reply: Reply, max_lines: isize, max_bytes: isize) -> Result[
+        (),
+        Error,
+    ] {
+        if self.broken.get() {
+            return Result::Err(
+                failure(ErrorKind::Closed, self.wire.get(), "textproto writer failed"),
+            )
+        }
+        if self.phase.get() == 1 {
+            return Result::Err(failure(ErrorKind::State, self.wire.get(), "dot block is active"))
+        }
+        if max_lines < 1 || max_bytes < 0 {
+            return Result::Err(failure(ErrorKind::Limit, self.wire.get(), "invalid reply limits"))
+        }
+        if reply.code < 100 || reply.code > 599 || reply.lines.is_empty() {
+            return Result::Err(
+                failure(ErrorKind::Invalid, self.wire.get(), "invalid numeric reply"),
+            )
+        }
+        if reply.lines.len() > max_lines {
+            return Result::Err(
+                failure(ErrorKind::Limit, self.wire.get(), "reply line count exceeds limit"),
+            )
+        }
+        let encoded = bytes::Bytes::new();
+        let code = reply.code.to_string().to_bytes();
+        for index in 0..reply.lines.len() {
+            let line = reply.lines[index];
+            let separator = index + 1 < reply.lines.len() || !line.is_empty();
+            let prefix = if separator {
+                4
+            } else {
+                3
+            };
+            if prefix > self.limits.max_line_bytes
+                || line.len() > self.limits.max_line_bytes - prefix {
+                return Result::Err(
+                    failure(ErrorKind::Limit, self.wire.get(), "reply line exceeds limit"),
+                )
+            }
+            let remaining = max_bytes - encoded.len();
+            if prefix + 2 > remaining || line.len() > remaining - prefix - 2 {
+                return Result::Err(
+                    failure(ErrorKind::Limit, self.wire.get(), "reply exceeds byte limit"),
+                )
+            }
+            validate_value(line).map_err(
+                |error| failure(error.kind, self.wire.get(), error.message),
+            )?;
+            encoded.extend_from_slice(code.as_slice());
+            if separator {
+                encoded.push(
+                    if index + 1 < reply.lines.len() {
+                        b'-'
+                    } else {
+                        b' '
+                    },
+                );
+            }
+            encoded.extend_from_slice(line.as_slice());
+            encoded.push(b'\r');
+            encoded.push(b'\n');
+        }
+        self.emit(encoded)
+    }
+
     pub fn begin_dot(self: Writer[W]) -> Result[(), Error] {
         if self.broken.get() {
             return Result::Err(

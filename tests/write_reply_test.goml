@@ -1,0 +1,142 @@
+package tests;
+
+use ecosystem::textproto::{Reply, Reader, Writer, Limits, ErrorKind};
+use std::bytes;
+use std::io;
+use std::testing;
+
+fn response(code: isize, lines: Vec[string]) -> Reply {
+    let values = Vec::new();
+    for line in lines {
+        values.push(bytes::Bytes::from_string(line));
+    }
+    Reply { code, lines: values }
+}
+
+#[test]
+fn reply_writer_matches_wire_format_and_roundtrips_raw_octets() -> () {
+    let output = io::Cursor::new(bytes::Bytes::new());
+    let writer = testing::expect_ok(Writer::new(output, Limits::standard()), "writer");
+    let reply = Reply {
+        code: 250,
+        lines: Vec::from_array(
+            [
+                bytes::Bytes::from_string("first"),
+                bytes::Bytes::new(),
+                bytes::Bytes::from_vec(b"\xff\tlast"),
+            ],
+        ),
+    };
+    let wire = b"250-first\r\n250-\r\n250 \xff\tlast\r\n221\r\nNEXT\r\n";
+    testing::assert_ok(writer.write_response(reply, 3, 34));
+    testing::assert_ok(writer.write_response(response(221, Vec::from_array([""])), 1, 5));
+    testing::assert_ok(writer.write_line(bytes::Bytes::from_string("NEXT")));
+    testing::assert(output.bytes().to_vec() == wire);
+    testing::assert_eq(writer.wire_bytes(), wire.len());
+    let reader = testing::expect_ok(
+        Reader::new(io::Cursor::new(output.bytes()), Limits::standard()),
+        "reader",
+    );
+    let decoded = testing::expect_ok(reader.read_response(3, 34), "reply");
+    testing::assert_eq(decoded.code, 250);
+    testing::assert_eq(decoded.lines.len(), 3);
+    for index in 0..3 {
+        testing::assert(decoded.lines[index].to_vec() == reply.lines[index].to_vec());
+    }
+    testing::assert_eq(testing::expect_ok(reader.read_response(1, 5), "bare reply").code, 221);
+    testing::assert(
+        testing::expect_some(testing::expect_ok(reader.read_line(), "tail"), "line").to_vec()
+            == b"NEXT",
+    );
+}
+
+#[test]
+fn reply_writer_checks_complete_reply_before_output_and_remains_usable() -> () {
+    let output = io::Cursor::new(bytes::Bytes::new());
+    let writer = testing::expect_ok(Writer::new(output, Limits::standard()), "writer");
+    for code in[99, 600, -1, 9223372036854775807] {
+        testing::assert_eq(
+            testing::expect_err(
+                writer.write_response(response(code, Vec::from_array(["ok"])), 1, 100),
+                "code",
+            ).kind,
+            ErrorKind::Invalid,
+        );
+    }
+    testing::assert_err(writer.write_response(response(250, Vec::new()), 1, 100));
+    for value in 0..128 {
+        if value != 9 && (value < 32 || value == 127) {
+            let bad = bytes::Bytes::from_vec(Vec::from_array([value.to_u8()]));
+            let reply = Reply {
+                code: 250,
+                lines: Vec::from_array([bytes::Bytes::from_string("valid"), bad]),
+            };
+            testing::assert_eq(
+                testing::expect_err(writer.write_response(reply, 2, 100), "control").kind,
+                ErrorKind::Invalid,
+            );
+        }
+    }
+    testing::assert_eq(output.bytes().len(), 0);
+    testing::assert_eq(writer.wire_bytes(), 0);
+    testing::assert_ok(writer.write_response(response(250, Vec::from_array(["ok"])), 1, 8));
+    testing::assert(output.bytes().to_vec() == b"250 ok\r\n");
+}
+
+#[test]
+fn reply_writer_bounds_include_codes_delimiters_and_crlf() -> () {
+    let reply = response(250, Vec::from_array(["a", "ok"]));
+    for (lines, bytes) in[(0, 15), (1, 15), (2, -1), (2, 14)] {
+        let output = io::Cursor::new(bytes::Bytes::new());
+        let writer = testing::expect_ok(Writer::new(output, Limits::standard()), "writer");
+        testing::assert_eq(
+            testing::expect_err(writer.write_response(reply, lines, bytes), "budget").kind,
+            ErrorKind::Limit,
+        );
+        testing::assert_eq(output.bytes().len(), 0);
+        testing::assert_ok(writer.write_response(reply, 2, 15));
+        testing::assert(output.bytes().to_vec() == b"250-a\r\n250 ok\r\n");
+    }
+    for width in[0, 2, 5, 6] {
+        let output = io::Cursor::new(bytes::Bytes::new());
+        let writer = testing::expect_ok(
+            Writer::new(output, Limits { max_line_bytes: width, ..Limits::standard() }),
+            "writer",
+        );
+        if width == 6 {
+            testing::assert_ok(writer.write_response(reply, 2, 15));
+        } else {
+            testing::assert_err(writer.write_response(reply, 2, 15));
+            testing::assert_eq(output.bytes().len(), 0);
+        }
+    }
+}
+
+#[test]
+fn reply_writer_observes_dot_and_failed_sink_states() -> () {
+    let output = io::Cursor::new(bytes::Bytes::new());
+    let writer = testing::expect_ok(Writer::new(output, Limits::standard()), "writer");
+    let reply = response(250, Vec::from_array(["ok"]));
+    testing::assert_ok(writer.begin_dot());
+    testing::assert_eq(
+        testing::expect_err(writer.write_response(reply, 1, 8), "dot active").kind,
+        ErrorKind::State,
+    );
+    testing::assert_eq(output.bytes().len(), 0);
+    testing::assert_ok(writer.finish_dot());
+    testing::assert_ok(writer.write_response(reply, 1, 8));
+    let calls = Ref::new(0);
+    let failed = testing::expect_ok(
+        Writer::new(FailingWriter { calls }, Limits::standard()),
+        "writer",
+    );
+    testing::assert_eq(
+        testing::expect_err(failed.write_response(reply, 1, 8), "sink").kind,
+        ErrorKind::Io,
+    );
+    testing::assert_eq(
+        testing::expect_err(failed.write_response(reply, 1, 8), "failed sink").kind,
+        ErrorKind::Closed,
+    );
+    testing::assert_eq(calls.get(), 1);
+}

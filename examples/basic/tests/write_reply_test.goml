@@ -1,0 +1,30 @@
+package tests;
+
+use ecosystem::textproto::{Reply, Reader, Writer, Limits};
+use std::bytes;
+use std::io;
+use std::testing;
+
+#[test]
+fn consumer_emits_multiline_numeric_reply() -> () {
+    let output = io::Cursor::new(bytes::Bytes::new());
+    let writer = testing::expect_ok(Writer::new(output, Limits::standard()), "writer");
+    testing::assert_ok(
+        writer.write_response(
+            Reply {
+                code: 250,
+                lines: Vec::from_array(
+                    [bytes::Bytes::from_string("server"), bytes::Bytes::from_string("SIZE 1000")],
+                ),
+            },
+            2,
+            100,
+        ),
+    );
+    testing::assert(output.bytes().to_vec() == b"250-server\r\n250 SIZE 1000\r\n");
+    let reader = testing::expect_ok(
+        Reader::new(io::Cursor::new(output.bytes()), Limits::standard()),
+        "reader",
+    );
+    testing::assert_eq(testing::expect_ok(reader.read_response(2, 100), "reply").code, 250);
+}

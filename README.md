@@ -52,6 +52,18 @@ make the reader terminal. Invalid limit arguments and an active dot block fail
 without consuming input. The package does not parse MIME encoded words, HTTP
 start lines or multipart bodies.
 
+`Writer::write_response(reply, max_lines, max_bytes)` writes the corresponding
+numeric reply format. Codes must be 100–599 and `Reply.lines` must contain at
+least one byte string. Continuation lines use `code-`, the final nonempty line
+uses `code `, and an empty final line uses the bare code. It preserves high bytes
+and horizontal tabs, rejecting other control bytes, CR and LF. The per-line
+limit includes the code and separator; the whole-reply budget also includes
+CRLF. The complete reply is validated and buffered within that budget before
+the sink receives any bytes. Invalid data or limits leave the writer usable;
+an I/O failure is terminal and may have written a prefix. Writing during an
+active dot block is rejected. Enhanced status consistency remains an explicit
+`Reply.enhanced_status()` check chosen by the application.
+
 Run `(cd ../verification && just ecosystem-test textproto)` from this library repository.
 
 ## Development and examples
