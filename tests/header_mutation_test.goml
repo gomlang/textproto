@@ -1,0 +1,68 @@
+package tests;
+
+use ecosystem::textproto;
+use std::bytes;
+use std::testing;
+
+fn raw(value: string) -> bytes::Bytes {
+    bytes::Bytes::from_vec(value.to_bytes())
+}
+
+#[test]
+fn set_replaces_all_duplicates_at_first_position_and_remove_keeps_other_order() -> () {
+    let headers = textproto::Headers::new();
+    for (name, value) in[
+        ("A", "one"),
+        ("x-name", "old"),
+        ("B", "two"),
+        ("X-NAME", "again"),
+        ("C", "three"),
+    ] {
+        testing::assert_ok(headers.append(name, raw(value)));
+    }
+    let alias = headers;
+    testing::assert_ok(headers.set("X-nAmE", raw("new")));
+    let fields = alias.fields();
+    testing::assert_eq(fields.len(), 4);
+    testing::assert_eq(fields[1].name, "X-Name");
+    testing::assert_eq(testing::expect_ok(fields[1].value_text(), "text"), "new");
+    testing::assert_eq(fields[2].name, "B");
+    testing::assert_eq(fields[3].name, "C");
+    testing::assert_ok(headers.set("missing", raw("")));
+    testing::assert_eq(headers.fields()[4].name, "Missing");
+    testing::assert_eq(testing::expect_ok(alias.remove("x-NAME"), "remove"), 1);
+    testing::assert_eq(testing::expect_ok(headers.remove("x-name"), "again"), 0);
+    testing::assert_eq(headers.fields()[1].name, "B");
+    testing::assert_ok(headers.append("a", raw("duplicate")));
+    testing::assert_eq(testing::expect_ok(headers.remove("A"), "duplicates"), 2);
+    testing::assert_eq(headers.len(), 3);
+}
+
+#[test]
+fn invalid_mutations_leave_headers_unchanged_and_copy_raw_bytes() -> () {
+    let headers = textproto::Headers::new();
+    testing::assert_ok(headers.append("Keep", raw("same")));
+    for name in["", "bad name", "bad:colon", "bad\r\nname"] {
+        testing::assert_err(headers.set(name, raw("x")));
+        testing::assert_err(headers.remove(name));
+    }
+    for value in[b"bad\0", b"bad\r\nX: injected", b"bad\x7f"] {
+        testing::assert_err(headers.set("Keep", bytes::Bytes::from_vec(value)));
+    }
+    testing::assert_eq(headers.len(), 1);
+    testing::assert(headers.values("keep")[0].to_vec() == b"same");
+    let snapshot = headers.fields();
+    let raw_bytes = bytes::Bytes::from_vec(b"\xff\t");
+    testing::assert_ok(headers.set("Keep", raw_bytes));
+    raw_bytes.set(0, b'x');
+    testing::assert(headers.values("keep")[0].to_vec() == b"\xff\t");
+    testing::assert(snapshot[0].value.to_vec() == b"same");
+    let current = headers.values("keep");
+    current[0].set(0, b'y');
+    testing::assert(headers.values("keep")[0].to_vec() == b"\xff\t");
+    testing::assert_eq(testing::expect_ok(headers.remove("keep"), "remove"), 1);
+    testing::assert(current[0].to_vec() == b"y\t");
+    testing::assert_eq(headers.len(), 0);
+    testing::assert_ok(headers.set("New", raw("again")));
+    testing::assert_eq(headers.len(), 1);
+}

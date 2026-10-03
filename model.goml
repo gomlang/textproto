@@ -108,6 +108,48 @@ impl Headers {
         Result::Ok(())
     }
 
+    pub fn set(self: Headers, name: string, value: bytes::Bytes) -> Result[(), Error] {
+        let name = canonical_key(name)?;
+        validate_value(value)?;
+        let replacement = Field { name, value: value.copy() };
+        let fields = Vec::new();
+        let mut replaced = false;
+        for field in self.fields_value {
+            if field.name == name {
+                if !replaced {
+                    fields.push(replacement);
+                    replaced = true;
+                }
+            } else {
+                fields.push(field);
+            }
+        }
+        if !replaced {
+            fields.push(replacement);
+        }
+        self.fields_value.clear();
+        self.fields_value.extend(fields);
+        Result::Ok(())
+    }
+
+    pub fn remove(self: Headers, name: string) -> Result[isize, Error] {
+        let name = canonical_key(name)?;
+        let fields = Vec::new();
+        let mut removed = 0;
+        for field in self.fields_value {
+            if field.name == name {
+                removed += 1;
+            } else {
+                fields.push(field);
+            }
+        }
+        if removed > 0 {
+            self.fields_value.clear();
+            self.fields_value.extend(fields);
+        }
+        Result::Ok(removed)
+    }
+
     pub fn values(self: Headers, name: string) -> Vec[bytes::Bytes] {
         let values = Vec::new();
         let key = canonical_key(name).unwrap_or("");

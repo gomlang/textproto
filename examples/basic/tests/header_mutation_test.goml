@@ -1,0 +1,29 @@
+package tests;
+
+use ecosystem::textproto;
+use std::bytes;
+use std::io;
+use std::testing;
+
+#[test]
+fn consumer_updates_parsed_headers_and_writes_validated_wire() -> () {
+    let reader = testing::expect_ok(
+        textproto::Reader::new(
+            io::Cursor::new(
+                bytes::Bytes::from_vec(b"A: first\r\nX: old\r\nB: last\r\nX: other\r\n\r\n"),
+            ),
+            textproto::Limits::standard(),
+        ),
+        "reader",
+    );
+    let headers = testing::expect_ok(reader.read_headers(false), "headers");
+    testing::assert_ok(headers.set("x", bytes::Bytes::from_vec(b"new")));
+    testing::assert_eq(testing::expect_ok(headers.remove("a"), "remove"), 1);
+    let sink = io::Cursor::new(bytes::Bytes::new());
+    let writer = testing::expect_ok(
+        textproto::Writer::new(sink, textproto::Limits::standard()),
+        "writer",
+    );
+    testing::assert_ok(writer.write_headers(headers));
+    testing::assert(sink.bytes().to_vec() == b"X: new\r\nB: last\r\n\r\n");
+}

@@ -13,6 +13,15 @@ Values preserve non-ASCII bytes, while `Field::value_text` requests UTF-8
 validation. `parse_header_line` exposes the same single-field validation to
 protocol adapters that own their own transport buffering.
 
+`Headers::set(name, value)` validates and copies a value, replaces all matching
+fields at the position of the first match, or appends when absent.
+`Headers::remove(name)` removes every matching field and returns the count.
+Both use the same case-insensitive ASCII name policy as `append`; invalid names
+or values leave the collection unchanged. Unrelated fields retain their order.
+Header aliases share these mutations, while `fields()` and `values()` return
+independent byte snapshots. These in-memory methods do not impose wire limits;
+`Writer::write_headers` applies its configured bounds before output.
+
 `read_dot_chunk` incrementally removes dot stuffing and recognizes a line
 containing only a dot as the terminator. `read_dot_bytes` is a bounded convenience
 that materializes the decoded block. `Writer[W: Write]` writes CRLF lines and
