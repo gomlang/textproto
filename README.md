@@ -31,7 +31,9 @@ before the terminator. Writer I/O errors and reader parse/source errors are
 terminal; invalid writer input is checked before emitting that chunk.
 
 `Limits` independently bounds physical line content, total header wire bytes,
-field count, unfolded field value bytes and decoded dot-body bytes. Those limits
+field count, unfolded field value bytes and decoded dot-body bytes. The physical
+line limit includes the extra dot used for stuffing and the one-byte terminator,
+but excludes CRLF. Reader and writer apply the same bound. Those limits
 are application policy, not SMTP's fixed transport line limit. Callers needing
 SMTP's 1000-octet line rule should set `max_line_bytes` accordingly. Header
 values reject control bytes other than horizontal tab but can contain arbitrary

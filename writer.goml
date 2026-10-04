@@ -257,7 +257,12 @@ impl[W: Write] Writer[W] {
                     failure(ErrorKind::Invalid, self.wire.get(), "bare LF in dot block"),
                 )
             }
-            if line >= self.limits.max_line_bytes {
+            let size = if start && byte == b'.' {
+                2
+            } else {
+                1
+            };
+            if size > self.limits.max_line_bytes - line {
                 return Result::Err(
                     failure(ErrorKind::Limit, self.wire.get(), "dot line exceeds limit"),
                 )
@@ -266,7 +271,7 @@ impl[W: Write] Writer[W] {
                 encoded.push(b'.');
             }
             encoded.push(byte);
-            line += 1;
+            line += size;
             start = false;
         }
         self.emit(encoded)?;
@@ -294,6 +299,11 @@ impl[W: Write] Writer[W] {
         if self.dot_cr.get() {
             return Result::Err(
                 failure(ErrorKind::Invalid, self.wire.get(), "unterminated CR in dot block"),
+            )
+        }
+        if self.limits.max_line_bytes < 1 {
+            return Result::Err(
+                failure(ErrorKind::Limit, self.wire.get(), "dot terminator exceeds line limit"),
             )
         }
         let suffix = if self.dot_start.get() {

@@ -1,0 +1,53 @@
+package tests;
+
+use ecosystem::textproto::{ErrorKind, Limits, Reader, Writer};
+use std::bytes;
+use std::io;
+use std::testing;
+
+#[test]
+fn dot_stuffing_counts_toward_the_physical_line_limit() -> () {
+    let limits = Limits { max_line_bytes: 4, ..Limits::standard() };
+    let input = bytes::Bytes::from_vec(b".abc\r\n");
+    for split in 0..4 {
+        let output = io::Cursor::new(bytes::Bytes::new());
+        let writer = testing::expect_ok(Writer::new(output, limits), "writer");
+        testing::assert_ok(writer.begin_dot());
+        testing::assert_ok(writer.write_dot_chunk(input.slice(0, split)));
+        let before = output.bytes().copy();
+        testing::assert_eq(
+            testing::expect_err(
+                writer.write_dot_chunk(input.slice(split, input.len())),
+                "stuffed physical line exceeds limit",
+            ).kind,
+            ErrorKind::Limit,
+        );
+        testing::assert(output.bytes().to_vec() == before.to_vec());
+        testing::assert_ok(writer.write_dot_chunk(input.slice(split, 3)));
+        testing::assert_ok(writer.finish_dot());
+        testing::assert(output.bytes().to_vec() == b"..ab\r\n.\r\n");
+        let reader = testing::expect_ok(
+            Reader::new(io::Cursor::new(output.bytes()), limits),
+            "same-limit reader",
+        );
+        testing::assert(
+            testing::expect_ok(reader.read_dot_bytes(), "exact physical line").to_vec()
+                == b".ab\r\n",
+        );
+    }
+}
+
+#[test]
+fn dot_terminator_must_fit_the_physical_line_limit() -> () {
+    let output = io::Cursor::new(bytes::Bytes::new());
+    let writer = testing::expect_ok(
+        Writer::new(output, Limits { max_line_bytes: 0, ..Limits::standard() }),
+        "writer",
+    );
+    testing::assert_ok(writer.begin_dot());
+    testing::assert_eq(
+        testing::expect_err(writer.finish_dot(), "terminator exceeds line limit").kind,
+        ErrorKind::Limit,
+    );
+    testing::assert_eq(output.bytes().len(), 0);
+}
