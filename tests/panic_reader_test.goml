@@ -1,0 +1,78 @@
+package tests;
+
+use ecosystem::textproto;
+use std::io;
+use io::Read;
+use std::panic;
+use std::testing;
+
+struct PanicTextSource {
+    prefix: Vec[byte],
+    position: Ref[isize],
+    calls: Ref[isize],
+    interrupted: Ref[bool],
+}
+
+impl Read for PanicTextSource {
+    fn read(self: PanicTextSource, output: MutSlice[byte]) -> Result[isize, io::Error] {
+        self.calls.set(self.calls.get() + 1);
+        if output.len() == 0 {
+            return Result::Ok(0)
+        }
+        if self.position.get() == self.prefix.len() {
+            if !self.interrupted.get() {
+                self.interrupted.set(true);
+                panic::raise("source interrupted after consumed prefix");
+            }
+            return Result::Ok(0)
+        }
+        output[0] = self.prefix[self.position.get()];
+        self.position.set(self.position.get() + 1);
+        Result::Ok(1)
+    }
+}
+
+#[test]
+fn reader_panics_cannot_turn_a_consumed_prefix_into_clean_eof() -> () {
+    for headers in[false, true] {
+        let source = PanicTextSource {
+            prefix: if headers {
+                b"X: one\r\npartial"
+            } else {
+                b"partial"
+            },
+            position: Ref::new(0),
+            calls: Ref::new(0),
+            interrupted: Ref::new(false),
+        };
+        let reader = testing::expect_ok(
+            textproto::Reader::new(source, textproto::Limits::standard()),
+            "reader",
+        );
+        if headers {
+            testing::assert_err(panic::catch(|| reader.read_headers(false)));
+        } else {
+            testing::assert_err(panic::catch(|| reader.read_line()));
+        }
+        let calls = source.calls.get();
+        let offset = reader.offset();
+        testing::assert_eq(
+            testing::expect_err(reader.read_line(), "terminal line").kind,
+            textproto::ErrorKind::Closed,
+        );
+        testing::assert_eq(
+            testing::expect_err(reader.read_headers(false), "terminal headers").kind,
+            textproto::ErrorKind::Closed,
+        );
+        testing::assert_eq(
+            testing::expect_err(reader.read_response(10, 1024), "terminal reply").kind,
+            textproto::ErrorKind::Closed,
+        );
+        testing::assert_eq(
+            testing::expect_err(reader.read_dot_bytes(), "terminal dot body").kind,
+            textproto::ErrorKind::Closed,
+        );
+        testing::assert_eq(source.calls.get(), calls);
+        testing::assert_eq(reader.offset(), offset);
+    }
+}

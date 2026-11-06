@@ -39,7 +39,15 @@ impl[R: Read] Reader[R] {
     }
 
     fn line_inner(self: Reader[R]) -> Result[Option[bytes::Bytes], Error] {
-        let line = self.source.read_until(b'\n', self.limits.max_line_bytes + 2).map_err(
+        let completed = Ref::new(false);
+        defer {
+            if !completed.get() {
+                self.broken.set(true);
+            }
+        };
+        let result = self.source.read_until(b'\n', self.limits.max_line_bytes + 2);
+        completed.set(true);
+        let line = result.map_err(
             |error| failure(
                 if error.kind() == io::ErrorKind::InvalidData {
                     ErrorKind::Limit

@@ -32,6 +32,10 @@ terminal; invalid writer input is checked before emitting that chunk.
 If an output provider panics during writing or flushing, that panic propagates.
 After the caller catches it, the writer is terminal and subsequent operations
 return `Closed` without touching the provider or reporting a successful retry.
+The reader likewise becomes terminal when its input provider panics. Catching
+the panic cannot restart parsing after bytes were already consumed from an
+incomplete line or header block; subsequent reads return `Closed` without
+accessing the provider.
 
 `Limits` independently bounds physical line content, total header wire bytes,
 field count, unfolded field value bytes and decoded dot-body bytes. The physical
