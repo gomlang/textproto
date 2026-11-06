@@ -29,6 +29,9 @@ header blocks, then `begin_dot`, `write_dot_chunk` and `finish_dot` frame a dot
 block. Input chunks can split CRLF. A final unterminated data line gets CRLF
 before the terminator. Writer I/O errors and reader parse/source errors are
 terminal; invalid writer input is checked before emitting that chunk.
+If an output provider panics during writing or flushing, that panic propagates.
+After the caller catches it, the writer is terminal and subsequent operations
+return `Closed` without touching the provider or reporting a successful retry.
 
 `Limits` independently bounds physical line content, total header wire bytes,
 field count, unfolded field value bytes and decoded dot-body bytes. The physical

@@ -44,7 +44,15 @@ impl[W: Write] Writer[W] {
                 failure(ErrorKind::Limit, self.wire.get(), "textproto wire overflow"),
             )
         }
-        match self.sink.write_all(data.as_slice()) {
+        let completed = Ref::new(false);
+        defer {
+            if !completed.get() {
+                self.broken.set(true);
+            }
+        };
+        let result = self.sink.write_all(data.as_slice());
+        completed.set(true);
+        match result {
             Ok(()) => {
                 self.wire.set(self.wire.get() + data.len());
                 Result::Ok(())
@@ -323,7 +331,15 @@ impl[W: Write] Writer[W] {
         }
         self.emit(bytes::Bytes::from_vec(suffix))?;
         self.phase.set(2);
-        self.sink.flush().map_err(
+        let completed = Ref::new(false);
+        defer {
+            if !completed.get() {
+                self.broken.set(true);
+            }
+        };
+        let result = self.sink.flush();
+        completed.set(true);
+        result.map_err(
             |error| {
                 self.broken.set(true);
                 failure(ErrorKind::Io, self.wire.get(), error.to_string())

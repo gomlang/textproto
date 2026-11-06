@@ -1,0 +1,78 @@
+package tests;
+
+use ecosystem::textproto;
+use std::bytes;
+use std::io;
+use io::Write;
+use std::panic;
+use std::testing;
+
+struct PanicTextSink {
+    data: Vec[byte],
+    calls: Ref[isize],
+    flushes: Ref[isize],
+    panic_flush: bool,
+}
+
+impl Write for PanicTextSink {
+    fn write(self: PanicTextSink, data: Slice[byte]) -> Result[isize, io::Error] {
+        self.calls.set(self.calls.get() + 1);
+        self.data.push(data[0]);
+        if !self.panic_flush && self.calls.get() == 1 {
+            panic::raise("partial output before panic");
+        }
+        Result::Ok(1)
+    }
+
+    fn flush(self: PanicTextSink) -> Result[(), io::Error] {
+        self.flushes.set(self.flushes.get() + 1);
+        if self.panic_flush {
+            panic::raise("dot flush interrupted");
+        }
+        Result::Ok(())
+    }
+}
+
+#[test]
+fn writer_panics_leave_output_terminal_after_catch() -> () {
+    for panic_flush in[false, true] {
+        let sink = PanicTextSink {
+            data: Vec::new(),
+            calls: Ref::new(0),
+            flushes: Ref::new(0),
+            panic_flush,
+        };
+        let writer = testing::expect_ok(
+            textproto::Writer::new(sink, textproto::Limits::standard()),
+            "writer",
+        );
+        if panic_flush {
+            testing::assert_ok(writer.begin_dot());
+            testing::assert_ok(writer.write_dot_chunk(b"hello".as_slice()));
+            testing::assert_err(panic::catch(|| writer.finish_dot()));
+        } else {
+            testing::assert_err(
+                panic::catch(|| writer.write_line(bytes::Bytes::from_vec(b"hello"))),
+            );
+            testing::assert_eq(sink.data.len(), 1);
+        }
+        let calls = sink.calls.get();
+        let flushes = sink.flushes.get();
+        let wire = writer.wire_bytes();
+        testing::assert_eq(
+            testing::expect_err(writer.finish_dot(), "terminal finish").kind,
+            textproto::ErrorKind::Closed,
+        );
+        testing::assert_eq(
+            testing::expect_err(writer.write_line(bytes::Bytes::from_vec(b"next")), "terminal line").kind,
+            textproto::ErrorKind::Closed,
+        );
+        testing::assert_eq(
+            testing::expect_err(writer.begin_dot(), "terminal begin").kind,
+            textproto::ErrorKind::Closed,
+        );
+        testing::assert_eq(writer.wire_bytes(), wire);
+        testing::assert_eq(sink.calls.get(), calls);
+        testing::assert_eq(sink.flushes.get(), flushes);
+    }
+}
